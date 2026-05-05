@@ -1,0 +1,172 @@
+using System;
+using System.Collections.Generic;
+using System.Windows;
+using System.Windows.Controls;
+using Microsoft.Data.Sqlite;
+
+namespace Database_App
+{
+    public partial class MainWindow : Window
+    {
+        private string connectionString = "Data Source=baza_fotoradary.db";
+
+        public MainWindow()
+        {
+            InitializeComponent();
+            InitializeDatabase();
+            LoadData();
+        }
+
+        private void InitializeDatabase()
+        {
+            using (var connection = new SqliteConnection(connectionString))
+            {
+                connection.Open();
+                var command = connection.CreateCommand();
+                command.CommandText = @"
+                    CREATE TABLE IF NOT EXISTS fotoradary (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        lokalizacja TEXT NOT NULL,
+                        ograniczenie_predkosci INTEGER NOT NULL,
+                        zarejestrowana_predkosc INTEGER NOT NULL,
+                        nr_rejestracyjny TEXT NOT NULL,
+                        data_pomiaru DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )";
+                command.ExecuteNonQuery();
+            }
+        }
+
+        private void BtnAdd_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(txtLokalizacja.Text) ||
+                string.IsNullOrWhiteSpace(txtOgraniczenie.Text) ||
+                string.IsNullOrWhiteSpace(txtPredkosc.Text) ||
+                string.IsNullOrWhiteSpace(txtRejestracja.Text))
+            {
+                MessageBox.Show("Wypełnij wszystkie pola!", "Błąd", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!int.TryParse(txtOgraniczenie.Text, out int limit) || !int.TryParse(txtPredkosc.Text, out int predkosc))
+            {
+                MessageBox.Show("Ograniczenie i prędkość muszą być liczbami!", "Błąd", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            using (var connection = new SqliteConnection(connectionString))
+            {
+                connection.Open();
+                var command = connection.CreateCommand();
+
+                command.CommandText = @"
+                    INSERT INTO fotoradary (lokalizacja, ograniczenie_predkosci, zarejestrowana_predkosc, nr_rejestracyjny)
+                    VALUES ($lokalizacja, $limit, $predkosc, $rejestracja)";
+
+                command.Parameters.AddWithValue("$lokalizacja", txtLokalizacja.Text);
+                command.Parameters.AddWithValue("$limit", limit);
+                command.Parameters.AddWithValue("$predkosc", predkosc);
+                command.Parameters.AddWithValue("$rejestracja", txtRejestracja.Text.ToUpper());
+
+                command.ExecuteNonQuery();
+            }
+
+            txtLokalizacja.Clear();
+            txtOgraniczenie.Clear();
+            txtPredkosc.Clear();
+            txtRejestracja.Clear();
+
+            LoadData();
+        }
+
+        private void BtnFilter_Click(object sender, RoutedEventArgs e)
+        {
+            string customQuery = "SELECT * FROM fotoradary WHERE 1=1 ";
+            var parameters = new Dictionary<string, object>();
+
+            if (!string.IsNullOrWhiteSpace(txtFilterMiasto.Text))
+            {
+                customQuery += " AND lokalizacja LIKE $miasto ";
+                parameters.Add("$miasto", "%" + txtFilterMiasto.Text + "%");
+            }
+
+            if (cmbFilterOperator.SelectedItem is ComboBoxItem selectedItem && !string.IsNullOrWhiteSpace(txtFilterPredkosc.Text))
+            {
+                if (int.TryParse(txtFilterPredkosc.Text, out int filterSpeed))
+                {
+                    string operatorSymbol = selectedItem.Content.ToString();
+                    customQuery += $" AND zarejestrowana_predkosc {operatorSymbol} $predkosc ";
+                    parameters.Add("$predkosc", filterSpeed);
+                }
+            }
+
+            customQuery += " ORDER BY data_pomiaru DESC";
+
+            LoadData(customQuery, parameters);
+        }
+
+        private void BtnClearFilter_Click(object sender, RoutedEventArgs e)
+        {
+            txtFilterMiasto.Clear();
+            txtFilterPredkosc.Clear();
+            cmbFilterOperator.SelectedIndex = -1;
+
+            LoadData();
+        }
+
+        private void LoadData(string query = null, Dictionary<string, object>? parameters = null)
+        {
+            var records = new List<FotoradarRecord>();
+
+            using (var connection = new SqliteConnection(connectionString))
+            {
+                connection.Open();
+                var command = connection.CreateCommand();
+
+                if (query == null)
+                {
+                    command.CommandText = "SELECT * FROM fotoradary ORDER BY data_pomiaru DESC";
+                }
+                else
+                {
+                    command.CommandText = query;
+
+                    if (parameters != null)
+                    {
+                        foreach (var param in parameters)
+                        {
+                            command.Parameters.AddWithValue(param.Key, param.Value);
+                        }
+                    }
+                }
+
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        records.Add(new FotoradarRecord
+                        {
+                            Id = reader.GetInt32(0),
+                            Lokalizacja = reader.GetString(1),
+                            Limit = reader.GetInt32(2),
+                            Predkosc = reader.GetInt32(3),
+                            Rejestracja = reader.GetString(4),
+                            DataPomiaru = reader.GetString(5)
+                        });
+                    }
+                }
+            }
+
+            dgFotoradary.ItemsSource = records;
+        }
+    }
+
+    public class FotoradarRecord
+    {
+        public int Id { get; set; }
+        public string? Lokalizacja { get; set; }
+        public int Limit { get; set; }
+        public int Predkosc { get; set; }
+        public string? Rejestracja { get; set; }
+        public string? DataPomiaru { get; set; }
+    }
+}
